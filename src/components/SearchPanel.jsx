@@ -8,15 +8,14 @@ export default function SearchPanel({ onSourceSelect, onDestinationSelect }) {
   const [destResults, setDestResults] = useState([]);
   const [isSourceLoading, setIsSourceLoading] = useState(false);
   const [isDestLoading, setIsDestLoading] = useState(false);
-  const [sourceError, setSourceError] = useState(null);
-  const [destError, setDestError] = useState(null);
+  const [sourceSelected, setSourceSelected] = useState(false);
+  const [destSelected, setDestSelected] = useState(false);
 
   const sourceAbortController = useRef(null);
   const destAbortController = useRef(null);
   const sourceDebounceTimer = useRef(null);
   const destDebounceTimer = useRef(null);
 
-  // Cleanup on unmount
   useEffect(() => {
     return () => {
       if (sourceAbortController.current) sourceAbortController.current.abort();
@@ -26,20 +25,16 @@ export default function SearchPanel({ onSourceSelect, onDestinationSelect }) {
     };
   }, []);
 
-  // Search function with proper abort handling
   const searchLocation = async (query, isSource) => {
     if (!query || query.length < 2) {
       if (isSource) {
         setSourceResults([]);
-        setSourceError(null);
       } else {
         setDestResults([]);
-        setDestError(null);
       }
       return;
     }
 
-    // Abort previous request
     const abortController = new AbortController();
     if (isSource) {
       if (sourceAbortController.current) {
@@ -47,14 +42,12 @@ export default function SearchPanel({ onSourceSelect, onDestinationSelect }) {
       }
       sourceAbortController.current = abortController;
       setIsSourceLoading(true);
-      setSourceError(null);
     } else {
       if (destAbortController.current) {
         destAbortController.current.abort();
       }
       destAbortController.current = abortController;
       setIsDestLoading(true);
-      setDestError(null);
     }
 
     try {
@@ -63,16 +56,12 @@ export default function SearchPanel({ onSourceSelect, onDestinationSelect }) {
         `format=json&q=${encodeURIComponent(query)}&` +
         `limit=5&countrycodes=in&addressdetails=1`,
         {
-          headers: {
-            'Accept': 'application/json',
-          },
+          headers: { 'Accept': 'application/json' },
           signal: abortController.signal,
         }
       );
 
-      if (!response.ok) {
-        throw new Error('Search failed');
-      }
+      if (!response.ok) throw new Error('Search failed');
 
       const data = await response.json();
 
@@ -84,32 +73,24 @@ export default function SearchPanel({ onSourceSelect, onDestinationSelect }) {
         setIsDestLoading(false);
       }
     } catch (err) {
-      // Don't show error if request was aborted
-      if (err.name === 'AbortError') {
-        return;
-      }
-
-      console.error('Search error:', err);
+      if (err.name === 'AbortError') return;
       
       if (isSource) {
-        setSourceError('Search failed. Please try again.');
         setSourceResults([]);
         setIsSourceLoading(false);
       } else {
-        setDestError('Search failed. Please try again.');
         setDestResults([]);
         setIsDestLoading(false);
       }
     }
   };
 
-  // Debounced search for source
   useEffect(() => {
     if (sourceDebounceTimer.current) {
       clearTimeout(sourceDebounceTimer.current);
     }
 
-    if (!sourceQuery) {
+    if (!sourceQuery || sourceSelected) {
       setSourceResults([]);
       setIsSourceLoading(false);
       return;
@@ -117,22 +98,21 @@ export default function SearchPanel({ onSourceSelect, onDestinationSelect }) {
 
     sourceDebounceTimer.current = setTimeout(() => {
       searchLocation(sourceQuery, true);
-    }, 600); // 600ms debounce
+    }, 400);
 
     return () => {
       if (sourceDebounceTimer.current) {
         clearTimeout(sourceDebounceTimer.current);
       }
     };
-  }, [sourceQuery]);
+  }, [sourceQuery, sourceSelected]);
 
-  // Debounced search for destination
   useEffect(() => {
     if (destDebounceTimer.current) {
       clearTimeout(destDebounceTimer.current);
     }
 
-    if (!destQuery) {
+    if (!destQuery || destSelected) {
       setDestResults([]);
       setIsDestLoading(false);
       return;
@@ -140,31 +120,35 @@ export default function SearchPanel({ onSourceSelect, onDestinationSelect }) {
 
     destDebounceTimer.current = setTimeout(() => {
       searchLocation(destQuery, false);
-    }, 600); // 600ms debounce
+    }, 400);
 
     return () => {
       if (destDebounceTimer.current) {
         clearTimeout(destDebounceTimer.current);
       }
     };
-  }, [destQuery]);
+  }, [destQuery, destSelected]);
 
   const handleSourceSelect = (result) => {
-    setSourceQuery(result.display_name.split(',')[0]);
+    const locationName = result.display_name.split(',')[0];
+    setSourceQuery(locationName);
     setSourceResults([]);
+    setSourceSelected(true);
     onSourceSelect(result);
   };
 
   const handleDestSelect = (result) => {
-    setDestQuery(result.display_name.split(',')[0]);
+    const locationName = result.display_name.split(',')[0];
+    setDestQuery(locationName);
     setDestResults([]);
+    setDestSelected(true);
     onDestinationSelect(result);
   };
 
   const clearSource = () => {
     setSourceQuery('');
     setSourceResults([]);
-    setSourceError(null);
+    setSourceSelected(false);
     if (sourceAbortController.current) {
       sourceAbortController.current.abort();
     }
@@ -173,67 +157,71 @@ export default function SearchPanel({ onSourceSelect, onDestinationSelect }) {
   const clearDest = () => {
     setDestQuery('');
     setDestResults([]);
-    setDestError(null);
+    setDestSelected(false);
     if (destAbortController.current) {
       destAbortController.current.abort();
     }
+  };
+
+  const handleSourceInputChange = (e) => {
+    setSourceQuery(e.target.value);
+    setSourceSelected(false);
+  };
+
+  const handleDestInputChange = (e) => {
+    setDestQuery(e.target.value);
+    setDestSelected(false);
   };
 
   return (
     <div className="space-y-4">
       {/* Source Input */}
       <div className="relative">
-        <label className="block text-xs font-bold text-slate-500 mb-2 uppercase tracking-wide">
+        <label className="block text-xs font-bold text-blue-600 mb-2 uppercase tracking-wide">
           <MapPin size={12} className="inline mr-1" />
           From
         </label>
         <div className="relative">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={16} />
           <input
             type="text"
             value={sourceQuery}
-            onChange={(e) => setSourceQuery(e.target.value)}
+            onChange={handleSourceInputChange}
             placeholder="Enter starting point..."
-            className="w-full pl-10 pr-10 py-3 rounded-xl border-2 border-slate-200 focus:border-green-500 focus:outline-none transition-all text-sm bg-white/80 backdrop-blur-sm"
+            className="w-full pl-10 pr-10 py-3 rounded-xl border-2 border-blue-200 focus:border-blue-500 focus:outline-none transition-all text-sm bg-white shadow-sm"
+            autoComplete="off"
           />
           {sourceQuery && (
             <button
               onClick={clearSource}
-              className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-red-500 transition-colors"
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-red-500 transition-colors z-10"
             >
-              <X size={18} />
+              <X size={16} />
             </button>
           )}
           {isSourceLoading && (
-            <div className="absolute right-3 top-1/2 -translate-y-1/2">
-              <Loader2 className="animate-spin text-green-500" size={18} />
+            <div className="absolute right-10 top-1/2 -translate-y-1/2 pointer-events-none">
+              <Loader2 className="animate-spin text-blue-500" size={16} />
             </div>
           )}
         </div>
 
-        {/* Source Error */}
-        {sourceError && (
-          <div className="mt-2 text-xs text-red-500 bg-red-50 p-2 rounded-lg">
-            {sourceError}
-          </div>
-        )}
-
-        {/* Source Results */}
-        {sourceResults.length > 0 && (
-          <div className="absolute z-50 w-full mt-2 bg-white/95 backdrop-blur-lg rounded-xl shadow-2xl border border-slate-200 max-h-64 overflow-y-auto custom-scrollbar">
+        {/* Source Results Dropdown */}
+        {sourceResults.length > 0 && !sourceSelected && (
+          <div className="absolute z-[100] w-full mt-2 bg-white rounded-xl shadow-2xl border-2 border-blue-200 max-h-56 overflow-y-auto">
             {sourceResults.map((result, idx) => (
               <button
                 key={idx}
                 onClick={() => handleSourceSelect(result)}
-                className="w-full text-left px-4 py-3 hover:bg-green-50 transition-colors border-b border-slate-100 last:border-0 flex items-start gap-3 group"
+                className="w-full text-left px-4 py-3 hover:bg-blue-50 transition-colors border-b border-slate-100 last:border-0 flex items-start gap-3 group"
               >
-                <MapPin size={16} className="text-green-500 mt-0.5 group-hover:scale-110 transition-transform" />
+                <MapPin size={14} className="text-blue-500 mt-1 shrink-0" />
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-semibold text-slate-700 truncate">
                     {result.display_name.split(',')[0]}
                   </p>
                   <p className="text-xs text-slate-500 truncate">
-                    {result.display_name.split(',').slice(1).join(', ')}
+                    {result.display_name.split(',').slice(1, 3).join(', ')}
                   </p>
                 </div>
               </button>
@@ -244,57 +232,51 @@ export default function SearchPanel({ onSourceSelect, onDestinationSelect }) {
 
       {/* Destination Input */}
       <div className="relative">
-        <label className="block text-xs font-bold text-slate-500 mb-2 uppercase tracking-wide">
+        <label className="block text-xs font-bold text-red-600 mb-2 uppercase tracking-wide">
           <MapPin size={12} className="inline mr-1" />
           To
         </label>
         <div className="relative">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={16} />
           <input
             type="text"
             value={destQuery}
-            onChange={(e) => setDestQuery(e.target.value)}
+            onChange={handleDestInputChange}
             placeholder="Enter destination..."
-            className="w-full pl-10 pr-10 py-3 rounded-xl border-2 border-slate-200 focus:border-red-500 focus:outline-none transition-all text-sm bg-white/80 backdrop-blur-sm"
+            className="w-full pl-10 pr-10 py-3 rounded-xl border-2 border-red-200 focus:border-red-500 focus:outline-none transition-all text-sm bg-white shadow-sm"
+            autoComplete="off"
           />
           {destQuery && (
             <button
               onClick={clearDest}
-              className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-red-500 transition-colors"
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-red-500 transition-colors z-10"
             >
-              <X size={18} />
+              <X size={16} />
             </button>
           )}
           {isDestLoading && (
-            <div className="absolute right-3 top-1/2 -translate-y-1/2">
-              <Loader2 className="animate-spin text-red-500" size={18} />
+            <div className="absolute right-10 top-1/2 -translate-y-1/2 pointer-events-none">
+              <Loader2 className="animate-spin text-red-500" size={16} />
             </div>
           )}
         </div>
 
-        {/* Destination Error */}
-        {destError && (
-          <div className="mt-2 text-xs text-red-500 bg-red-50 p-2 rounded-lg">
-            {destError}
-          </div>
-        )}
-
-        {/* Destination Results */}
-        {destResults.length > 0 && (
-          <div className="absolute z-50 w-full mt-2 bg-white/95 backdrop-blur-lg rounded-xl shadow-2xl border border-slate-200 max-h-64 overflow-y-auto custom-scrollbar">
+        {/* Destination Results Dropdown */}
+        {destResults.length > 0 && !destSelected && (
+          <div className="absolute z-[100] w-full mt-2 bg-white rounded-xl shadow-2xl border-2 border-red-200 max-h-56 overflow-y-auto">
             {destResults.map((result, idx) => (
               <button
                 key={idx}
                 onClick={() => handleDestSelect(result)}
                 className="w-full text-left px-4 py-3 hover:bg-red-50 transition-colors border-b border-slate-100 last:border-0 flex items-start gap-3 group"
               >
-                <MapPin size={16} className="text-red-500 mt-0.5 group-hover:scale-110 transition-transform" />
+                <MapPin size={14} className="text-red-500 mt-1 shrink-0" />
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-semibold text-slate-700 truncate">
                     {result.display_name.split(',')[0]}
                   </p>
                   <p className="text-xs text-slate-500 truncate">
-                    {result.display_name.split(',').slice(1).join(', ')}
+                    {result.display_name.split(',').slice(1, 3).join(', ')}
                   </p>
                 </div>
               </button>
