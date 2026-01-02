@@ -199,23 +199,32 @@ export default function MapView({
     import.meta.env.VITE_ORS_API_KEY ||
     "eyJvcmciOiI1YjNjZTM1OTc4NTExMTAwMDFjZjYyNDgiLCJpZCI6ImU5NWEwMGY5ZWI4ZTRkZGRiMmM0YjQ0YTJjZGE2MWJhIiwiaCI6Im11cm11cjY0In0=";
 
+  // FIXED: Better geolocation handling
   useEffect(() => {
-    const geoOptions = {
-      enableHighAccuracy: true,
-      timeout: 5000,
-      maximumAge: 0,
-    };
+    if ("geolocation" in navigator) {
+      const geoOptions = {
+        enableHighAccuracy: false, // Changed to false for faster response
+        timeout: 10000, // Increased to 10 seconds
+        maximumAge: 60000, // Cache for 1 minute
+      };
 
-    navigator.geolocation.getCurrentPosition(
-      (pos) => setStartPos([pos.coords.latitude, pos.coords.longitude]),
-      (error) => {
-        console.warn("Geolocation error:", error.message);
-        setStartPos([31.326, 75.5762]); // Fallback to Jalandhar
-      },
-      geoOptions
-    );
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          setStartPos([pos.coords.latitude, pos.coords.longitude]);
+        },
+        (error) => {
+          console.info("Using default location (India center)");
+          setStartPos(INDIA_CENTER); // Use India center as fallback
+        },
+        geoOptions
+      );
+    } else {
+      // Browser doesn't support geolocation
+      setStartPos(INDIA_CENTER);
+    }
   }, []);
 
+  // FIXED: Better API error handling and retry logic
   useEffect(() => {
     const getRoute = async () => {
       const origin = source
@@ -244,13 +253,16 @@ export default function MapView({
         mode === "driving-hgv"
           ? "driving-hgv"
           : mode === "foot-walking"
-          ? "driving-car" // Use driving-car for train (we'll just calculate differently)
+          ? "driving-car"
           : "driving-car";
 
       while (retries > 0) {
+        const controller = new AbortController();
+        let timeoutId;
+
         try {
-          const controller = new AbortController();
-          const timeoutId = setTimeout(() => controller.abort(), 10000);
+          // FIXED: Increased timeout to 15 seconds
+          timeoutId = setTimeout(() => controller.abort(), 15000);
 
           const response = await fetch(
             `https://api.openrouteservice.org/v2/directions/${orsMode}/geojson`,
@@ -273,23 +285,24 @@ export default function MapView({
           );
 
           clearTimeout(timeoutId);
-          const data = await response.json();
 
-          if (response.status === 429) {
-            console.warn(
-              `Rate limit exceeded. Retrying in ${delay}ms... (${retries} attempts left)`
-            );
-            await new Promise((resolve) => setTimeout(resolve, delay));
-            delay *= 2;
-            retries--;
-            continue;
-          }
-
+          // Handle non-OK responses
           if (!response.ok) {
+            const data = await response.json().catch(() => ({}));
+
+            // Rate limiting
+            if (response.status === 429) {
+              console.warn(`Rate limit exceeded. Retrying in ${delay}ms...`);
+              await new Promise((resolve) => setTimeout(resolve, delay));
+              delay *= 2;
+              retries--;
+              continue;
+            }
+
+            // Specific error codes
             if (data.error) {
               switch (data.error.code) {
                 case 2010:
-                  console.warn("Location too remote for routing");
                   onRouteError?.(
                     "One of these locations is too remote. Please try locations with better road access."
                   );
@@ -297,7 +310,6 @@ export default function MapView({
                   setIsLoadingRoute(false);
                   return;
                 case 2009:
-                  console.warn("Route exceeds maximum distance");
                   onRouteError?.(
                     "Distance too far for this transport mode. Try a different mode."
                   );
@@ -311,6 +323,8 @@ export default function MapView({
             throw new Error(`HTTP ${response.status}: ${response.statusText}`);
           }
 
+          const data = await response.json();
+
           if (data.features && data.features.length > 0) {
             const coords = data.features[0].geometry.coordinates.map((c) => [
               c[1],
@@ -320,25 +334,35 @@ export default function MapView({
             setRoutePoints(coords);
             onRouteFound(dist);
             setIsLoadingRoute(false);
-            return;
+            return; // Success!
           } else {
             throw new Error("No route found");
           }
         } catch (err) {
-          console.error(
-            `Routing attempt failed (${4 - retries}/3):`,
-            err.message
-          );
+          console.error(`Routing attempt ${4 - retries}/3:`, err.message);
+
+          // Clear timeout on error
+          if (timeoutId) clearTimeout(timeoutId);
+
           retries--;
 
+          // FIXED: Better handling of abort errors
           if (err.name === "AbortError") {
-            onRouteError?.(
-              "Request timed out. Please check your internet connection."
-            );
-            setIsLoadingRoute(false);
-            return;
+            if (retries === 0) {
+              onRouteError?.(
+                "Request timed out. Please check your internet connection and try again."
+              );
+              setIsLoadingRoute(false);
+              return;
+            }
+            // Retry on timeout
+            console.warn("Request timeout, retrying...");
+            await new Promise((resolve) => setTimeout(resolve, delay));
+            delay *= 2;
+            continue;
           }
 
+          // Other errors
           if (retries === 0) {
             setRoutePoints([]);
             setIsLoadingRoute(false);
