@@ -11,7 +11,7 @@ import { useEffect, useState, useRef, useCallback } from "react";
 import "leaflet/dist/leaflet.css";
 import L from "leaflet";
 
-// Fix default marker icon issue in production
+// Fix default marker icon issue
 delete L.Icon.Default.prototype._getIconUrl;
 L.Icon.Default.mergeOptions({
   iconRetinaUrl:
@@ -22,7 +22,7 @@ L.Icon.Default.mergeOptions({
     "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-shadow.png",
 });
 
-// Cool Welcome Animation Overlay Component
+// Welcome Animation Component
 function WelcomeAnimation({ onComplete }) {
   const [isVisible, setIsVisible] = useState(true);
 
@@ -94,7 +94,7 @@ function WelcomeAnimation({ onComplete }) {
   );
 }
 
-// Component to handle responsive resizing and route fitting
+// Map Controller Component
 function MapController({ source, destination, routePoints, startPos }) {
   const map = useMap();
 
@@ -136,7 +136,7 @@ function MapController({ source, destination, routePoints, startPos }) {
   return null;
 }
 
-// Animated Pulsing User Location Marker
+// Animated User Marker
 function AnimatedUserMarker({ position }) {
   return (
     <>
@@ -193,17 +193,14 @@ export default function MapView({
   const abortControllerRef = useRef(null);
 
   const INDIA_CENTER = [20.5937, 78.9629];
-  const ORS_API_KEY =
-    import.meta.env.VITE_ORS_API_KEY ||
-    "eyJvcmciOiI1YjNjZTM1OTc4NTExMTAwMDFjZjYyNDgiLCJpZCI6ImU5NWEwMGY5ZWI4ZTRkZGRiMmM0YjQ0YTJjZGE2MWJhIiwiaCI6Im11cm11cjY0In0=";
 
-  // Optimized geolocation
+  // Geolocation
   useEffect(() => {
     if ("geolocation" in navigator) {
       const geoOptions = {
         enableHighAccuracy: false,
         timeout: 8000,
-        maximumAge: 300000, // Cache for 5 minutes
+        maximumAge: 300000,
       };
 
       navigator.geolocation.getCurrentPosition(
@@ -220,9 +217,8 @@ export default function MapView({
     }
   }, []);
 
-  // Optimized route fetching with GET method (faster than POST)
+  // OPTIMIZED: OSRM Route Fetching (FREE & FAST!)
   const getRoute = useCallback(async () => {
-    // Abort previous request if exists
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
     }
@@ -238,100 +234,53 @@ export default function MapView({
       return;
     }
 
-    if (!ORS_API_KEY) {
-      onRouteError?.("API configuration error");
-      return;
-    }
-
     setIsLoadingRoute(true);
     abortControllerRef.current = new AbortController();
 
-    // Map transport modes
-    const orsMode =
-      mode === "driving-hgv" ? "driving-hgv" : "driving-car";
-
     try {
-      // Using simpler GET request for better performance
-      const url = `https://api.openrouteservice.org/v2/directions/${orsMode}?` +
-        `start=${origin.lon},${origin.lat}&` +
-        `end=${destination.lon},${destination.lat}`;
+      // OSRM Free Public API - No API Key Required!
+      const profile = mode === "driving-hgv" ? "car" : "car"; // OSRM uses: car, bike, foot
+      const url = `https://router.project-osrm.org/route/v1/${profile}/${origin.lon},${origin.lat};${destination.lon},${destination.lat}?overview=full&geometries=geojson`;
 
       const response = await fetch(url, {
-        method: "GET",
-        headers: {
-          Accept: "application/json, application/geo+json, application/gpx+xml, img/png; charset=utf-8",
-          Authorization: ORS_API_KEY,
-        },
         signal: abortControllerRef.current.signal,
       });
 
       if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-
-        // Handle specific errors
-        if (response.status === 429) {
-          throw new Error("Rate limit exceeded. Please wait a moment and try again.");
-        }
-
-        if (response.status === 404 || response.status === 500) {
-          throw new Error("Route not found. Please try different locations.");
-        }
-
-        if (errorData.error) {
-          switch (errorData.error.code) {
-            case 2010:
-              throw new Error("Location too remote for routing. Try locations with better road access.");
-            case 2009:
-              throw new Error("Distance too far for this transport mode.");
-            case 2004:
-              throw new Error("Invalid location coordinates.");
-            default:
-              throw new Error(errorData.error.message || "Routing failed");
-          }
-        }
-
-        throw new Error(`Server error: ${response.status}`);
+        throw new Error("Could not calculate route");
       }
 
       const data = await response.json();
 
-      if (data.features && data.features.length > 0) {
-        const coords = data.features[0].geometry.coordinates.map((c) => [
-          c[1],
-          c[0],
-        ]);
-        const dist = data.features[0].properties.summary.distance / 1000;
+      if (data.code === "Ok" && data.routes && data.routes.length > 0) {
+        const route = data.routes[0];
+        const coords = route.geometry.coordinates.map((c) => [c[1], c[0]]);
+        const dist = route.distance / 1000; // Convert to km
 
         setRoutePoints(coords);
         onRouteFound(dist);
         setIsLoadingRoute(false);
       } else {
-        throw new Error("No route data received");
+        throw new Error("No route found");
       }
     } catch (err) {
-      // Don't show error if request was aborted (new request started)
-      if (err.name === "AbortError") {
-        return;
-      }
+      if (err.name === "AbortError") return;
 
-      console.error("Route error:", err.message);
+      console.error("Route error:", err);
       setRoutePoints([]);
       setIsLoadingRoute(false);
 
-      // User-friendly error messages
       if (err.message.includes("Failed to fetch")) {
-        onRouteError?.("Network error. Please check your internet connection.");
+        onRouteError?.("Network error. Check your internet connection.");
       } else {
-        onRouteError?.(err.message);
+        onRouteError?.("Could not find route. Try different locations.");
       }
     }
-  }, [source, destination, startPos, mode, onRouteFound, onRouteError, ORS_API_KEY]);
+  }, [source, destination, startPos, mode, onRouteFound, onRouteError]);
 
-  // Trigger route calculation
   useEffect(() => {
     getRoute();
 
-    // Cleanup on unmount
     return () => {
       if (abortControllerRef.current) {
         abortControllerRef.current.abort();
@@ -339,15 +288,14 @@ export default function MapView({
     };
   }, [getRoute]);
 
-  // Get route color based on mode
   const getRouteColor = () => {
     switch (mode) {
       case "driving-car":
-        return "#ef4444"; // Red for private car
+        return "#ef4444";
       case "driving-hgv":
-        return "#3b82f6"; // Blue for bus
+        return "#3b82f6";
       case "foot-walking":
-        return "#22c55e"; // Green for train
+        return "#22c55e";
       default:
         return "#22c55e";
     }
@@ -355,12 +303,10 @@ export default function MapView({
 
   return (
     <div className="h-full w-full relative">
-      {/* Welcome Animation */}
       {showWelcome && (
         <WelcomeAnimation onComplete={() => setShowWelcome(false)} />
       )}
 
-      {/* Route Loading Indicator */}
       {isLoadingRoute && (
         <div className="absolute top-4 left-1/2 -translate-x-1/2 z-[1000] bg-white/95 backdrop-blur-sm px-4 py-2 rounded-full shadow-lg border border-slate-200 flex items-center gap-2 animate-in slide-in-from-top-4">
           <div className="h-4 w-4 border-2 border-green-500 border-t-transparent rounded-full animate-spin"></div>
@@ -381,11 +327,8 @@ export default function MapView({
           url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
           attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
           maxZoom={19}
-          updateWhenIdle={true}
-          keepBuffer={2}
         />
 
-        {/* Source Marker */}
         {source && (
           <Marker position={[source.lat, source.lon]}>
             <Popup>
@@ -399,7 +342,6 @@ export default function MapView({
           </Marker>
         )}
 
-        {/* Destination Marker */}
         {destination && (
           <Marker position={[destination.lat, destination.lon]}>
             <Popup>
@@ -413,13 +355,10 @@ export default function MapView({
           </Marker>
         )}
 
-        {/* User Location Marker */}
         {!source && startPos && <AnimatedUserMarker position={startPos} />}
 
-        {/* Route Polyline */}
         {routePoints.length > 0 && (
           <>
-            {/* Glow effect */}
             <Polyline
               positions={routePoints}
               pathOptions={{
@@ -428,7 +367,6 @@ export default function MapView({
                 opacity: 0.3,
               }}
             />
-            {/* Main line */}
             <Polyline
               positions={routePoints}
               pathOptions={{
